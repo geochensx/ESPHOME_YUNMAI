@@ -1,0 +1,109 @@
+esphome:
+  name: esp32-c3
+  friendly_name: esp32
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.mcu: esp32c3
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+    version: 'recommended'
+    platform_version: '6.8.1'
+
+# Enable logging
+logger:
+
+globals:
+  - id: last_ble_notification
+    type: uint64_t
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "填自己的"
+
+ota:
+  - platform: esphome
+    password: "填自己的"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Blell Fallback Hotspot"
+    password: "puSeBVB5Izk7"
+
+captive_portal:
+
+web_server:
+  port: 80
+
+bluetooth_proxy:
+  active: true
+
+# Define the BLE Client
+ble_client:
+  - mac_address: "64:cf:d9:09:fa:40"  # Replace with your scale's MAC address
+    id: my_ble_client
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: 'Asia/Shanghai'  # 例如 'America/New_York'
+    servers:
+      - ntp1.aliyun.com
+
+sensor:
+  - platform: template
+    id: weight_sensor
+    name: "Weight Sensor"
+    unit_of_measurement: 'kg'
+    accuracy_decimals: 2
+    icon: "mdi:weight-kilogram"
+  - platform: template
+    id: resistance_sensor
+    name: "Resistance Sensor"
+    unit_of_measurement: 'Ω'
+    accuracy_decimals: 0
+    icon: "mdi:resistor"
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: my_ble_client
+    name: "UPDATE"
+    unit_of_measurement: 'sec'
+    service_uuid: "ffe0"
+    characteristic_uuid: "ffe4"
+    notify: True
+    lambda: |-
+      auto now = id(sntp_time).now().timestamp;
+      auto data = x;
+      if (id(last_ble_notification) == 0 || (now - id(last_ble_notification))>= 4) {
+          if (data.size() >= 20) {
+              uint16_t weight_raw = (static_cast<uint8_t>(data[13]) << 8) | static_cast<uint8_t>(data[14]);
+              float weight = weight_raw * 0.01f;
+              float resistance_raw = (static_cast<uint8_t>(data[15]) << 8) | static_cast<uint8_t>(data[16]);
+              ESP_LOGD("ble_client", "Weight: %.2f kg, Resistance: %u", weight, resistance_raw);
+              id(weight_sensor).publish_state(weight);
+              id(resistance_sensor).publish_state(resistance_raw);
+              id(last_ble_notification)=now;
+          }
+          return id(last_ble_notification);
+      } else {
+          id(last_ble_notification)=now;
+          ESP_LOGD("ble_client", "Ignoring notification, too soon after last one");
+          return id(last_ble_notification);
+      }
+text_sensor:
+  - platform: wifi_info
+    ssid:
+      name: Connected SSID
+      icon: "mdi:signal-variant"
+    ip_address:
+      name: IP Address
+      icon: "mdi:ip-network"
+    mac_address:
+      name: Mac Address
+      icon: "mdi:wifi-marker"
+    
